@@ -1,0 +1,9 @@
+package: github.com/gkawamoto/k8s-visualizer
+import:
+- package: github.com/zserge/webview
+  version: ^0.1.0
+- package: github.com/rakyll/statik
+  version: ~0.1.5
+- package: gopkg.in/yaml.v2
+  version: ^2.2.2
+- package: github.com/gkawamoto/kube-second-mate
