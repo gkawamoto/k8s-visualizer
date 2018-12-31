@@ -5,8 +5,8 @@ import (
 	"log"
 	"path/filepath"
 
-	"github.com/gkawamoto/k8s-designer/dependency"
-	"github.com/gkawamoto/k8s-designer/ui"
+	"github.com/gkawamoto/k8s-visualizer/dependency"
+	"github.com/gkawamoto/k8s-visualizer/ui"
 )
 
 // PlotHandler ?

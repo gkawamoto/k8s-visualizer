@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/gkawamoto/k8s-designer/nsplot"
-	_ "github.com/gkawamoto/k8s-designer/statik"
-	"github.com/gkawamoto/k8s-designer/ui"
+	"github.com/gkawamoto/k8s-visualizer/nsplot"
+	_ "github.com/gkawamoto/k8s-visualizer/statik"
+	"github.com/gkawamoto/k8s-visualizer/ui"
 )
 
 func main() {
