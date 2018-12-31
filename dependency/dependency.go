@@ -3,6 +3,7 @@ package dependency
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,17 +16,18 @@ import (
 type Graph struct {
 	entities      []*Entity
 	hash          map[string]*Entity
-	referenceHash map[string]string
+	referenceHash map[string][]string
 }
 
 // BuildGraph ?
 func BuildGraph(target string) (*Graph, error) {
 	var result = Graph{
+		entities:      []*Entity{},
 		hash:          map[string]*Entity{},
-		referenceHash: map[string]string{},
+		referenceHash: map[string][]string{},
 	}
 	var err error
-	result.entities, err = retrieveEntities(target)
+	err = result.retrieveEntities(target)
 	if err != nil {
 		return nil, err
 	}
@@ -44,9 +46,12 @@ func (g *Graph) Entities() []*Entity {
 // References ?
 func (g *Graph) References() map[int]int {
 	var result = map[int]int{}
+	var toRefs []string
 	var from, to string
-	for from, to = range g.referenceHash {
-		result[g.hash[from].ID] = g.hash[to].ID
+	for from, toRefs = range g.referenceHash {
+		for _, to = range toRefs {
+			result[g.hash[from].ID] = g.hash[to].ID
+		}
 	}
 	return result
 }
@@ -58,7 +63,6 @@ func (g *Graph) buildEdges() error {
 	for index, entity = range g.entities {
 		entity.ID = index
 		entity.uid = entityUID(entity)
-		g.hash[entity.uid] = entity
 	}
 	for index, entity = range g.entities {
 		err = g.resolveDependencies(entity)
@@ -71,6 +75,7 @@ func (g *Graph) buildEdges() error {
 
 func (g *Graph) resolveDependencies(entity *Entity) error {
 	var err error
+	//log.Println("resolveDependencies", entity.Kind, entity.Metadata.Name)
 	switch entity.Kind {
 	case "Ingress":
 		err = g.resolveIngressDependencies(entity)
@@ -99,17 +104,23 @@ func (g *Graph) resolveIngressDependencies(entity *Entity) error {
 			var uid = kindNameUID("Service", httpPath.Backend.ServiceName)
 			e, ok = g.hash[uid]
 			if !ok {
+				e = &Entity{}
 				e.uid = uid
 				e.ID = len(g.entities)
 				e.Kind = "UnknownService"
 				e.Metadata.Name = httpPath.Backend.ServiceName
-				g.entities = append(g.entities, e)
-				g.hash[uid] = e
+				g.addEntity(e)
 			}
-			g.referenceHash[entity.uid] = uid
+			g.makeReference(entity.uid, uid)
 		}
 	}
 	return nil
+}
+
+func (g *Graph) makeReference(from, to string) {
+	g.referenceHash[from] = append(g.referenceHash[from], to)
+	//g.referenceHash[from] = commonslice.RemoveDuplicateString(g.referenceHash[from])
+	//log.Println(g.referenceHash[from])
 }
 
 func (g *Graph) resolveServiceDependencies(entity *Entity) error {
@@ -145,10 +156,9 @@ func (g *Graph) resolveServiceDependencies(entity *Entity) error {
 				}
 			}
 			if found {
-				g.referenceHash[entity.uid] = e.uid
+				g.makeReference(entity.uid, e.uid)
 			}
-		}
-		if e.Kind == "Deployment" {
+		} else if e.Kind == "Deployment" {
 			var ds k8s.Deployment
 			err = yaml.Unmarshal([]byte(e.raw), &ds)
 			if err != nil {
@@ -169,7 +179,7 @@ func (g *Graph) resolveServiceDependencies(entity *Entity) error {
 				}
 			}
 			if found {
-				g.referenceHash[entity.uid] = e.uid
+				g.makeReference(entity.uid, e.uid)
 			}
 		}
 	}
@@ -182,32 +192,38 @@ func (g *Graph) resolveDaemonSetDependencies(entity *Entity) error {
 	if err != nil {
 		return err
 	}
-	var stringServices string
+	var services string
 	var ok bool
-	stringServices, ok = obj.Metadata.Annotations["kube.references.services"]
+	services, ok = obj.Metadata.Annotations["kube.references.services"]
 	if !ok {
 		return nil
 	}
-	return g.resolveKubeReferencesAnnotationsDependencies(stringServices, entity)
+	return g.resolveKubeReferencesAnnotationsDependencies(services, entity)
 }
 func (g *Graph) resolveKubeReferencesAnnotationsDependencies(services string, entity *Entity) error {
 	var service string
 	for _, service = range strings.Split(services, ",") {
+		log.Println(entity.Metadata.Name, service)
 		var e *Entity
 		var ok bool
 		var uid = kindNameUID("Service", service)
 		e, ok = g.hash[uid]
 		if !ok {
+			e = &Entity{}
 			e.uid = uid
 			e.ID = len(g.entities)
 			e.Kind = "UnknownService"
 			e.Metadata.Name = service
-			g.entities = append(g.entities, e)
-			g.hash[uid] = e
+			g.addEntity(e)
 		}
-		g.referenceHash[entity.uid] = uid
+		g.makeReference(entity.uid, uid)
 	}
 	return nil
+}
+
+func (g *Graph) addEntity(e *Entity) {
+	g.entities = append(g.entities, e)
+	g.hash[e.uid] = e
 }
 
 func (g *Graph) resolveDeploymentDependencies(entity *Entity) error {
@@ -216,13 +232,13 @@ func (g *Graph) resolveDeploymentDependencies(entity *Entity) error {
 	if err != nil {
 		return err
 	}
-	var stringServices string
+	var services string
 	var ok bool
-	stringServices, ok = obj.Metadata.Annotations["kube.references.services"]
+	services, ok = obj.Metadata.Annotations["kube.references.services"]
 	if !ok {
 		return nil
 	}
-	return g.resolveKubeReferencesAnnotationsDependencies(stringServices, entity)
+	return g.resolveKubeReferencesAnnotationsDependencies(services, entity)
 }
 
 func entityUID(entity *Entity) string {
@@ -252,8 +268,7 @@ type EntityReference struct {
 	stringTo   string
 }
 
-func retrieveEntities(target string) ([]*Entity, error) {
-	var result []*Entity
+func (g *Graph) retrieveEntities(target string) error {
 	var err = filepath.Walk(target, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -269,58 +284,54 @@ func retrieveEntities(target string) ([]*Entity, error) {
 		if err != nil {
 			return fmt.Errorf("readfile: %s", err)
 		}
-		var entities []*Entity
-		entities, err = resolveEntities(data)
+		err = g.resolveEntities(data)
 		if err != nil {
 			return fmt.Errorf("resolveEntities: %s", err)
 		}
-		result = append(result, entities...)
 		return nil
 	})
-	return result, err
+	return err
 }
 
-func resolveEntities(content []byte) ([]*Entity, error) {
+func (g *Graph) resolveEntities(content []byte) error {
 	var data map[string]interface{}
 	var err = yaml.Unmarshal(content, &data)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var ok bool
 	var kind string
 	kind, ok = data["kind"].(string)
-	var result = []*Entity{}
 	if !ok {
-		return result, nil
+		return nil
 	}
 	if kind == "List" {
 		var obj interface{}
 		var items []interface{}
 		items, ok = data["items"].([]interface{})
 		if !ok {
-			return result, nil
+			return nil
 		}
 		for _, obj = range items {
 			content, err = yaml.Marshal(obj)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			var subentities = []*Entity{}
-			subentities, err = resolveEntities(content)
+			err = g.resolveEntities(content)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			result = append(result, subentities...)
 		}
 	} else {
 		var e = &Entity{
+			uid: kindNameUID(data["kind"].(string), (data["metadata"].(map[interface{}]interface{}))["name"].(string)),
 			raw: string(content),
 		}
 		err = yaml.Unmarshal(content, e)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		result = append(result, e)
+		g.addEntity(e)
 	}
-	return result, nil
+	return nil
 }

@@ -52,6 +52,7 @@ func (p *PlotHandler) readyHandler(data []byte) {
 	}
 	var from, to int
 	for from, to = range graph.References() {
+		log.Println(from, to)
 		p.window.AddEdge(from, to)
 	}
 	p.window.SetTitle(p.title)
